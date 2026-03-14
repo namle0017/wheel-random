@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Vòng quay chọn tên ngẫu nhiên - Random Name Picker với trọng số xác suất" />
+  <title>🎡 Vòng Quay Tên | Random Name Picker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React via CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- App bundle (Babel transforms JSX in browser) -->
+  <script type="text/babel" data-type="module">
+    // ============================================
+    // UTILS - Inline for CDN approach
+    // ============================================
+
+    // --- inputParser ---
+    function parseNames(rawText) {
+      if (!rawText || typeof rawText !== 'string') return [];
+      return rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    }
+
+    // --- groupClassifier ---
+    function classifyNames(names) {
+      const groups = { khanh: [], namChi: [], other: [] };
+      if (!Array.isArray(names)) return groups;
+      for (const name of names) {
+        const lower = name.toLowerCase();
+        if (lower.includes('khánh') || lower.includes('khanh')) {
+          groups.khanh.push(name);
+        } else if (lower.includes('nam') || lower.includes('chi')) {
+          groups.namChi.push(name);
+        } else {
+          groups.other.push(name);
+        }
+      }
+      return groups;
+    }
+
+    // --- weightCalculator ---
+    const BASE_WEIGHTS = { khanh: 70, namChi: 10, other: 20 };
+
+    function calculateGroupWeights(groups) {
+      const activeGroups = {};
+      let totalActiveBase = 0;
+      for (const [key, baseWeight] of Object.entries(BASE_WEIGHTS)) {
+        if (groups[key] && groups[key].length > 0) {
+          activeGroups[key] = baseWeight;
+          totalActiveBase += baseWeight;
+        }
+      }
+      if (totalActiveBase === 0) return { khanh: 0, namChi: 0, other: 0 };
+      const result = { khanh: 0, namChi: 0, other: 0 };
+      for (const [key, weight] of Object.entries(activeGroups)) {
+        result[key] = (weight / totalActiveBase) * 100;
+      }
+      return result;
+    }
+
+    function calculateIndividualWeights(names, groups) {
+      if (!names || names.length === 0) return [];
+      const groupWeights = calculateGroupWeights(groups);
+      const result = [];
+      for (const [groupKey, members] of Object.entries(groups)) {
+        if (members.length === 0) continue;
+        const individualWeight = groupWeights[groupKey] / members.length;
+        for (const name of members) {
+          result.push({ name, weight: individualWeight, group: groupKey });
+        }
+      }
+      return result;
+    }
+
+    // --- weightedRandom ---
+    function weightedRandomSelect(entries) {
+      if (!entries || entries.length === 0) return -1;
+      const totalWeight = entries.reduce((sum, e) => sum + e.weight, 0);
+      if (totalWeight <= 0) return -1;
+      let random = Math.random() * totalWeight;
+      for (let i = 0; i < entries.length; i++) {
+        random -= entries[i].weight;
+        if (random <= 0) return i;
+      }
+      return entries.length - 1;
+    }
+
+    function calculateSliceAngles(entries) {
+      if (!entries || entries.length === 0) return [];
+      const totalWeight = entries.reduce((sum, e) => sum + e.weight, 0);
+      if (totalWeight <= 0) return [];
+      let currentAngle = 0;
+      return entries.map(entry => {
+        const sliceAngle = (entry.weight / totalWeight) * 360;
+        const r = { ...entry, startAngle: currentAngle, endAngle: currentAngle + sliceAngle };
+        currentAngle += sliceAngle;
+        return r;
+      });
+    }
+
+    // Equal slices for visual display (hides weighted logic)
+    function calculateEqualSliceAngles(entries) {
+      if (!entries || entries.length === 0) return [];
+      const sliceAngle = 360 / entries.length;
+      let currentAngle = 0;
+      return entries.map(entry => {
+        const r = { ...entry, startAngle: currentAngle, endAngle: currentAngle + sliceAngle };
+        currentAngle += sliceAngle;
+        return r;
+      });
+    }
+
+    // ============================================
+    // WHEEL COLORS
+    // ============================================
+    const WHEEL_COLORS = [
+      '#7c3aed', '#06b6d4', '#10b981', '#f59e0b',
+      '#ef4444', '#ec4899', '#8b5cf6', '#14b8a6',
+      '#f97316', '#6366f1', '#22d3ee', '#a855f7',
+    ];
+
+    // ============================================
+    // TICK SOUND (Web Audio API)
+    // ============================================
+    const audioCtxRef = { current: null };
+    function playTick(freq = 800, duration = 0.03) {
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const ctx = audioCtxRef.current;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.08, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + duration);
+      } catch (e) { /* Audio not supported, fail silently */ }
+    }
+
+    function playWinSound() {
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const ctx = audioCtxRef.current;
+        const notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = freq;
+          osc.type = 'triangle';
+          const t = ctx.currentTime + i * 0.12;
+          gain.gain.setValueAtTime(0.12, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          osc.start(t);
+          osc.stop(t + 0.3);
+        });
+      } catch (e) { /* fail silently */ }
+    }
+
+    // ============================================
+    // CONFETTI COMPONENT
+    // ============================================
+    function Confetti({ show }) {
+      if (!show) return null;
+      const pieces = [];
+      for (let i = 0; i < 60; i++) {
+        const style = {
+          left: Math.random() * 100 + '%',
+          animationDelay: Math.random() * 2 + 's',
+          animationDuration: (2 + Math.random() * 2) + 's',
+          background: WHEEL_COLORS[i % WHEEL_COLORS.length],
+          borderRadius: Math.random() > 0.5 ? '50%' : '2px',
+          width: (6 + Math.random() * 8) + 'px',
+          height: (6 + Math.random() * 8) + 'px',
+        };
+        pieces.push(<div key={i} className="confetti-piece" style={style} />);
+      }
+      return <div className="confetti-container">{pieces}</div>;
+    }
+
+    // ============================================
+    // INPUT PANEL COMPONENT
+    // ============================================
+    function InputPanel({ text, onChange, entries }) {
+      return (
+        <div className="input-panel">
+          {/* Input Card */}
+          <div className="card">
+            <div className="card-title">
+              Danh sách tên
+            </div>
+            <textarea
+              className="name-textarea"
+              value={text}
+              onChange={e => onChange(e.target.value)}
+              placeholder={"Nhập mỗi tên trên một dòng...\nVí dụ:\nNguyễn Văn Khánh\nTrần Thị Chi\nLê Hoàng Nam\nPhạm Minh Tuấn"}
+              spellCheck={false}
+            />
+            <div className="input-info">
+              <span>Mỗi dòng = 1 tên</span>
+              <span className="input-count">{entries.length} tên</span>
+            </div>
+          </div>
+
+          {/* Name List Preview - simple, no weights shown */}
+          {entries.length > 0 && (
+            <div className="card">
+              <div className="card-title">
+                Người chơi
+              </div>
+              <ul className="name-list">
+                {entries.map((entry, idx) => (
+                  <li key={idx} className="name-item">
+                    <span className="name-text">{idx + 1}. {entry.name}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================
+    // WHEEL COMPONENT
+    // ============================================
+    function WheelCanvas({ entries, spinning, rotation, spinDuration, onSpin }) {
+      if (entries.length === 0) {
+        return (
+          <div className="wheel-area">
+            <div className="wheel-container">
+              <div className="wheel-empty">
+                <div className="empty-icon">?</div>
+                <p>Nhập danh sách tên để bắt đầu quay</p>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const slices = calculateEqualSliceAngles(entries);
+      const cx = 240, cy = 240, r = 220;
+
+      function polarToCart(angleDeg, radius) {
+        const rad = (angleDeg - 90) * Math.PI / 180;
+        return {
+          x: cx + radius * Math.cos(rad),
+          y: cy + radius * Math.sin(rad),
+        };
+      }
+
+      function renderSlice(slice, idx) {
+        const { startAngle, endAngle, name } = slice;
+        const sliceAngle = endAngle - startAngle;
+        
+        // SVG arc
+        const start = polarToCart(startAngle, r);
+        const end   = polarToCart(endAngle, r);
+        const largeArc = sliceAngle > 180 ? 1 : 0;
+
+        const pathData = sliceAngle >= 359.99
+          ? `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} A ${r} ${r} 0 1 1 ${cx} ${cy - r} Z`
+          : `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+
+        const color = WHEEL_COLORS[idx % WHEEL_COLORS.length];
+
+        // Text position (midpoint of arc)
+        const midAngle = startAngle + sliceAngle / 2;
+        const textR = r * 0.65;
+        const textPos = polarToCart(midAngle, textR);
+        const textRotation = midAngle;
+
+        // Truncate long names
+        const maxLen = sliceAngle < 25 ? 8 : sliceAngle < 45 ? 12 : 18;
+        const displayName = name.length > maxLen ? name.substring(0, maxLen) + '…' : name;
+        const fontSize = sliceAngle < 20 ? '9' : sliceAngle < 35 ? '11' : '13';
+
+        return (
+          <g key={idx}>
+            <path
+              d={pathData}
+              fill={color}
+              stroke="rgba(255,255,255,0.15)"
+              strokeWidth="2"
+            />
+            {sliceAngle > 8 && (
+              <text
+                x={textPos.x}
+                y={textPos.y}
+                fill="white"
+                fontSize={fontSize}
+                fontWeight="700"
+                fontFamily="Inter, sans-serif"
+                textAnchor="middle"
+                dominantBaseline="central"
+                transform={`rotate(${textRotation}, ${textPos.x}, ${textPos.y})`}
+                style={{ textShadow: '0 1px 3px rgba(0,0,0,0.5)', pointerEvents: 'none' }}
+              >
+                {displayName}
+              </text>
+            )}
+          </g>
+        );
+      }
+
+      // Generate tick marks positions
+      const tickMarks = [];
+      for (let i = 0; i < entries.length; i++) {
+        const angle = (360 / entries.length) * i;
+        const rad = (angle - 90) * Math.PI / 180;
+        const inner = r - 8;
+        const outer = r + 2;
+        tickMarks.push({
+          x1: cx + inner * Math.cos(rad),
+          y1: cy + inner * Math.sin(rad),
+          x2: cx + outer * Math.cos(rad),
+          y2: cy + outer * Math.sin(rad),
+        });
+      }
+
+      return (
+        <div className="wheel-area">
+          <div className="wheel-container">
+            {/* Pointer */}
+            <svg className={`wheel-pointer ${spinning ? 'pointer-bounce' : ''}`} width="40" height="44" viewBox="0 0 40 44">
+              <defs>
+                <linearGradient id="pointerGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f0f0f5" />
+                  <stop offset="100%" stopColor="#c4b5fd" />
+                </linearGradient>
+                <filter id="pointerGlow">
+                  <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#a855f7" floodOpacity="0.5" />
+                </filter>
+              </defs>
+              <polygon points="20,44 3,0 37,0" fill="url(#pointerGrad)" stroke="#a855f7" strokeWidth="2" filter="url(#pointerGlow)" />
+            </svg>
+
+            {/* Wheel SVG */}
+            <svg
+              className="wheel-svg"
+              viewBox="0 0 480 480"
+              style={{
+                transform: `rotate(${rotation}deg)`,
+                transition: spinning
+                  ? `transform ${spinDuration}s cubic-bezier(0.15, 0.60, 0.08, 1.00)`
+                  : 'none',
+              }}
+            >
+              {/* Outer decorative rings */}
+              <circle cx={cx} cy={cy} r={r + 14} fill="none" stroke="rgba(168,85,247,0.15)" strokeWidth="2" />
+              <circle cx={cx} cy={cy} r={r + 10} fill="none" stroke="rgba(168,85,247,0.25)" strokeWidth="3" />
+              <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
+
+              {/* Tick marks at slice boundaries */}
+              {tickMarks.map((t, i) => (
+                <line key={`tick-${i}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2}
+                  stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" />
+              ))}
+
+              {/* Slices */}
+              {slices.map(renderSlice)}
+
+              {/* Center hub */}
+              <circle cx={cx} cy={cy} r="54" fill="rgba(10,10,26,0.85)" stroke="rgba(168,85,247,0.35)" strokeWidth="3" />
+              <circle cx={cx} cy={cy} r="50" fill="rgba(10,10,26,0.92)" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
+            </svg>
+
+            {/* Spin Button */}
+            <button
+              className="spin-button"
+              onClick={onSpin}
+              disabled={spinning || entries.length === 0}
+            >
+              {spinning ? '✨' : 'QUAY'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // RESULT MODAL COMPONENT
+    // ============================================
+    function ResultModal({ winner, onClose }) {
+      if (!winner) return null;
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-star-burst">
+              <div className="star-ring"></div>
+            </div>
+            <div className="modal-label">KẾT QUẢ</div>
+            <div className="modal-winner">Chúc mừng</div>
+            <div className="modal-winner-name">{winner.name}</div>
+            <div className="modal-winner-sub">đã trúng!</div>
+            <button className="modal-close-btn" onClick={onClose}>
+              Quay tiếp
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // MAIN APP
+    // ============================================
+    function App() {
+      const [text, setText] = React.useState(
+        'Nguyễn Văn Khánh\nTrần Khánh Hòa\nLê Hoàng Nam\nPhạm Thị Chi\nVõ Minh Tuấn\nĐặng Thị Hương\nBùi Thanh Sơn'
+      );
+      const [spinning, setSpinning] = React.useState(false);
+      const [rotation, setRotation] = React.useState(0);
+      const [spinDuration, setSpinDuration] = React.useState(4);
+      const [winner, setWinner] = React.useState(null);
+      const [showConfetti, setShowConfetti] = React.useState(false);
+      const [error, setError] = React.useState('');
+
+      // Derived state
+      const names = React.useMemo(() => parseNames(text), [text]);
+      const groups = React.useMemo(() => classifyNames(names), [names]);
+      const groupWeights = React.useMemo(() => calculateGroupWeights(groups), [groups]);
+      const entries = React.useMemo(() => calculateIndividualWeights(names, groups), [names, groups]);
+
+      // Spin handler
+      const handleSpin = React.useCallback(() => {
+        if (spinning || entries.length === 0) return;
+
+        if (entries.length === 0) {
+          setError('Vui lòng nhập ít nhất 1 tên!');
+          setTimeout(() => setError(''), 3000);
+          return;
+        }
+
+        setSpinning(true);
+        setWinner(null);
+        setShowConfetti(false);
+
+        // Pick winner using WEIGHTED probability (hidden from UI)
+        const winnerIdx = weightedRandomSelect(entries);
+        const winnerEntry = entries[winnerIdx];
+
+        // Calculate target angle using EQUAL slices (visual)
+        const equalSlices = calculateEqualSliceAngles(entries);
+        const winnerSlice = equalSlices[winnerIdx];
+        const sliceAngle = winnerSlice.endAngle - winnerSlice.startAngle;
+
+        // ALWAYS land near slice edges — never in the center!
+        // This creates maximum "almost landed on someone else!" excitement
+        let offsetInSlice;
+        if (Math.random() < 0.5) {
+          // Near start edge: 5%-15% into the slice
+          offsetInSlice = 0.05 + Math.random() * 0.10;
+        } else {
+          // Near end edge: 85%-95% into the slice
+          offsetInSlice = 0.85 + Math.random() * 0.10;
+        }
+        const targetPointAngle = winnerSlice.startAngle + sliceAngle * offsetInSlice;
+
+        // Calculate correct rotation so target point lands at pointer (top)
+        const desiredRemainder = (360 - targetPointAngle + 360) % 360;
+        const currentRemainder = ((rotation % 360) + 360) % 360;
+        const extraRotation = (desiredRemainder - currentRemainder + 360) % 360;
+
+        // Randomize spin count and duration for varying excitement
+        const fullSpins = 6 + Math.floor(Math.random() * 5); // 6-10 full spins
+        const duration = 5 + Math.random() * 4; // 5-9 seconds
+        const targetAngle = rotation + (fullSpins * 360) + extraRotation;
+
+        setSpinDuration(duration);
+        setRotation(targetAngle);
+
+        // Play tick sounds during spin
+        const totalRotation = targetAngle - rotation;
+        const numTicks = Math.floor(totalRotation / (360 / entries.length));
+        let ticksPlayed = 0;
+        const tickInterval = setInterval(() => {
+          ticksPlayed++;
+          // Tick frequency slows as wheel decelerates
+          const progress = ticksPlayed / numTicks;
+          if (progress > 0.7) {
+            playTick(600 + Math.random() * 400, 0.05);
+          } else {
+            playTick(800 + Math.random() * 200, 0.02);
+          }
+          if (ticksPlayed >= numTicks) clearInterval(tickInterval);
+        }, (duration * 1000) / numTicks);
+
+        // After animation completes
+        setTimeout(() => {
+          clearInterval(tickInterval);
+          setSpinning(false);
+          setWinner(winnerEntry);
+          setShowConfetti(true);
+          playWinSound();
+        }, duration * 1000 + 300);
+      }, [spinning, entries, rotation]);
+
+      const handleCloseResult = () => {
+        setWinner(null);
+        setTimeout(() => setShowConfetti(false), 500);
+      };
+
+      return (
+        <div className="app">
+          <header className="app-header">
+            <h1>Vòng Quay Tên</h1>
+            <p className="subtitle">Random Name Picker</p>
+          </header>
+
+          <main className="app-main">
+            <InputPanel
+              text={text}
+              onChange={setText}
+              entries={entries}
+            />
+
+            <WheelCanvas
+              entries={entries}
+              spinning={spinning}
+              rotation={rotation}
+              spinDuration={spinDuration}
+              onSpin={handleSpin}
+            />
+          </main>
+
+          <Confetti show={showConfetti} />
+          <ResultModal winner={winner} onClose={handleCloseResult} />
+
+          {error && <div className="error-toast">{error}</div>}
+        </div>
+      );
+    }
+
+    // ============================================
+    // RENDER
+    // ============================================
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
