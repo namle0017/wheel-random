@@ -30,11 +30,13 @@
 
     // --- groupClassifier ---
     function classifyNames(names) {
-      const groups = { khanh: [], namChi: [], other: [] };
+      const groups = { thong: [], khanh: [], namChi: [], other: [] };
       if (!Array.isArray(names)) return groups;
       for (const name of names) {
         const lower = name.toLowerCase();
-        if (lower.includes('khánh') || lower.includes('khanh')) {
+        if (lower.includes('thông') || lower.includes('thong')) {
+          groups.thong.push(name);
+        } else if (lower.includes('khánh') || lower.includes('khanh')) {
           groups.khanh.push(name);
         } else if (lower.includes('nam') || lower.includes('chi')) {
           groups.namChi.push(name);
@@ -49,6 +51,10 @@
     const BASE_WEIGHTS = { khanh: 70, namChi: 10, other: 20 };
 
     function calculateGroupWeights(groups) {
+      if (groups.thong && groups.thong.length > 0) {
+        return { thong: 100, khanh: 0, namChi: 0, other: 0 };
+      }
+
       const activeGroups = {};
       let totalActiveBase = 0;
       for (const [key, baseWeight] of Object.entries(BASE_WEIGHTS)) {
@@ -57,8 +63,8 @@
           totalActiveBase += baseWeight;
         }
       }
-      if (totalActiveBase === 0) return { khanh: 0, namChi: 0, other: 0 };
-      const result = { khanh: 0, namChi: 0, other: 0 };
+      if (totalActiveBase === 0) return { thong: 0, khanh: 0, namChi: 0, other: 0 };
+      const result = { thong: 0, khanh: 0, namChi: 0, other: 0 };
       for (const [key, weight] of Object.entries(activeGroups)) {
         result[key] = (weight / totalActiveBase) * 100;
       }
@@ -193,10 +199,7 @@
       return <div className="confetti-container">{pieces}</div>;
     }
 
-    // ============================================
-    // INPUT PANEL COMPONENT
-    // ============================================
-    function InputPanel({ text, onChange, entries }) {
+    function InputPanel({ text, onChange, entries, excludedNames, onRestore, onResetAll }) {
       return (
         <div className="input-panel">
           {/* Input Card */}
@@ -217,18 +220,33 @@
             </div>
           </div>
 
-          {/* Name List Preview - simple, no weights shown */}
+          {/* Player list with excluded indicators */}
           {entries.length > 0 && (
             <div className="card">
-              <div className="card-title">
-                Người chơi
+              <div className="card-title-row">
+                <div className="card-title">Người chơi</div>
+                {excludedNames.length > 0 && (
+                  <button className="reset-btn" onClick={onResetAll}>
+                    Đưa tất cả vào lại
+                  </button>
+                )}
               </div>
               <ul className="name-list">
-                {entries.map((entry, idx) => (
-                  <li key={idx} className="name-item">
-                    <span className="name-text">{idx + 1}. {entry.name}</span>
-                  </li>
-                ))}
+                {entries.map((entry, idx) => {
+                  const isExcluded = excludedNames.includes(entry.name);
+                  return (
+                    <li key={idx} className={`name-item ${isExcluded ? 'excluded' : ''}`}>
+                      <span className="name-text">
+                        {idx + 1}. {entry.name}
+                      </span>
+                      {isExcluded && (
+                        <button className="restore-btn" onClick={() => onRestore(entry.name)}>
+                          +
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -335,20 +353,21 @@
 
       return (
         <div className="wheel-area">
-          <div className="wheel-container">
-            {/* Pointer */}
-            <svg className={`wheel-pointer ${spinning ? 'pointer-bounce' : ''}`} width="40" height="44" viewBox="0 0 40 44">
-              <defs>
-                <linearGradient id="pointerGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#f0f0f5" />
-                  <stop offset="100%" stopColor="#c4b5fd" />
-                </linearGradient>
-                <filter id="pointerGlow">
-                  <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#a855f7" floodOpacity="0.5" />
-                </filter>
-              </defs>
-              <polygon points="20,44 3,0 37,0" fill="url(#pointerGrad)" stroke="#a855f7" strokeWidth="2" filter="url(#pointerGlow)" />
-            </svg>
+          <div className="wheel-3d-wrapper">
+            <div className="wheel-container">
+              {/* Pointer */}
+              <svg className={`wheel-pointer ${spinning ? 'pointer-bounce' : ''}`} width="40" height="44" viewBox="0 0 40 44">
+                <defs>
+                  <linearGradient id="pointerGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f0f0f5" />
+                    <stop offset="100%" stopColor="#c4b5fd" />
+                  </linearGradient>
+                  <filter id="pointerGlow">
+                    <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#a855f7" floodOpacity="0.5" />
+                  </filter>
+                </defs>
+                <polygon points="20,44 3,0 37,0" fill="url(#pointerGrad)" stroke="#a855f7" strokeWidth="2" filter="url(#pointerGlow)" />
+              </svg>
 
             {/* Wheel SVG */}
             <svg
@@ -390,8 +409,9 @@
             </button>
           </div>
         </div>
-      );
-    }
+      </div>
+    );
+  }
 
     // ============================================
     // RESULT MODAL COMPONENT
@@ -430,19 +450,30 @@
       const [winner, setWinner] = React.useState(null);
       const [showConfetti, setShowConfetti] = React.useState(false);
       const [error, setError] = React.useState('');
+      const [excludedNames, setExcludedNames] = React.useState([]);
 
       // Derived state
       const names = React.useMemo(() => parseNames(text), [text]);
-      const groups = React.useMemo(() => classifyNames(names), [names]);
-      const groupWeights = React.useMemo(() => calculateGroupWeights(groups), [groups]);
-      const entries = React.useMemo(() => calculateIndividualWeights(names, groups), [names, groups]);
+      
+      // Pass mapped names for display in InputPanel
+      const displayEntries = React.useMemo(() => names.map(name => ({ name })), [names]);
+
+      // Active names are those not excluded
+      const activeNames = React.useMemo(
+        () => names.filter(n => !excludedNames.includes(n)),
+        [names, excludedNames]
+      );
+
+      // We only need groups and weights for active participants to spin the wheel
+      const activeGroups = React.useMemo(() => classifyNames(activeNames), [activeNames]);
+      const activeEntries = React.useMemo(() => calculateIndividualWeights(activeNames, activeGroups), [activeNames, activeGroups]);
 
       // Spin handler
       const handleSpin = React.useCallback(() => {
-        if (spinning || entries.length === 0) return;
+        if (spinning || activeEntries.length === 0) return;
 
-        if (entries.length === 0) {
-          setError('Vui lòng nhập ít nhất 1 tên!');
+        if (activeEntries.length === 0) {
+          setError('Không còn ai trong vòng quay!');
           setTimeout(() => setError(''), 3000);
           return;
         }
@@ -451,12 +482,12 @@
         setWinner(null);
         setShowConfetti(false);
 
-        // Pick winner using WEIGHTED probability (hidden from UI)
-        const winnerIdx = weightedRandomSelect(entries);
-        const winnerEntry = entries[winnerIdx];
+        // Pick winner from ACTIVE entries using WEIGHTED probability
+        const winnerIdx = weightedRandomSelect(activeEntries);
+        const winnerEntry = activeEntries[winnerIdx];
 
         // Calculate target angle using EQUAL slices (visual)
-        const equalSlices = calculateEqualSliceAngles(entries);
+        const equalSlices = calculateEqualSliceAngles(activeEntries);
         const winnerSlice = equalSlices[winnerIdx];
         const sliceAngle = winnerSlice.endAngle - winnerSlice.startAngle;
 
@@ -487,7 +518,7 @@
 
         // Play tick sounds during spin
         const totalRotation = targetAngle - rotation;
-        const numTicks = Math.floor(totalRotation / (360 / entries.length));
+        const numTicks = Math.floor(totalRotation / (360 / activeEntries.length));
         let ticksPlayed = 0;
         const tickInterval = setInterval(() => {
           ticksPlayed++;
@@ -509,11 +540,23 @@
           setShowConfetti(true);
           playWinSound();
         }, duration * 1000 + 300);
-      }, [spinning, entries, rotation]);
+      }, [spinning, activeEntries, rotation]);
 
       const handleCloseResult = () => {
+        // Add winner to excluded list (remove from wheel)
+        if (winner) {
+          setExcludedNames(prev => [...prev, winner.name]);
+        }
         setWinner(null);
         setTimeout(() => setShowConfetti(false), 500);
+      };
+
+      const handleRestore = (name) => {
+        setExcludedNames(prev => prev.filter(n => n !== name));
+      };
+
+      const handleResetAll = () => {
+        setExcludedNames([]);
       };
 
       return (
@@ -527,11 +570,14 @@
             <InputPanel
               text={text}
               onChange={setText}
-              entries={entries}
+              entries={displayEntries}
+              excludedNames={excludedNames}
+              onRestore={handleRestore}
+              onResetAll={handleResetAll}
             />
 
             <WheelCanvas
-              entries={entries}
+              entries={activeEntries}
               spinning={spinning}
               rotation={rotation}
               spinDuration={spinDuration}

@@ -12,17 +12,21 @@
  */
 
 const BASE_WEIGHTS = {
-  khanh: 70,
-  namChi: 10,
-  other: 20,
+  thong: 100,
+  khanh: 0,
+  other: 0,
 };
 
 /**
  * Tính trọng số thực tế cho mỗi nhóm sau redistribution.
- * @param {{ khanh: string[], namChi: string[], other: string[] }} groups
- * @returns {{ khanh: number, namChi: number, other: number }} phần trăm nhóm sau redistribute
+ * @param {{ thong: string[], khanh: string[], namChi: string[], other: string[] }} groups
+ * @returns {{ thong: number, khanh: number, namChi: number, other: number }} phần trăm nhóm sau redistribute
  */
 export function calculateGroupWeights(groups) {
+  if (groups.thong && groups.thong.length > 0) {
+    return { thong: 100, khanh: 0, namChi: 0, other: 0 };
+  }
+
   const activeGroups = {};
   let totalActiveBase = 0;
 
@@ -35,11 +39,11 @@ export function calculateGroupWeights(groups) {
 
   // Nếu không có nhóm nào active → return 0
   if (totalActiveBase === 0) {
-    return { khanh: 0, namChi: 0, other: 0 };
+    return { thong: 0, khanh: 0, namChi: 0, other: 0 };
   }
 
   // Redistribute: scale từng nhóm active lên 100%
-  const result = { khanh: 0, namChi: 0, other: 0 };
+  const result = { thong: 0, khanh: 0, namChi: 0, other: 0 };
   for (const [key, weight] of Object.entries(activeGroups)) {
     result[key] = (weight / totalActiveBase) * 100;
   }

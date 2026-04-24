@@ -14,6 +14,7 @@
  */
 export function classifyNames(names) {
   const groups = {
+    thong: [],
     khanh: [],
     namChi: [],
     other: [],
@@ -24,7 +25,9 @@ export function classifyNames(names) {
   for (const name of names) {
     const lower = name.toLowerCase();
 
-    if (lower.includes('khánh') || lower.includes('khanh')) {
+    if (lower.includes('thông') || lower.includes('thong')) {
+      groups.thong.push(name);
+    } else if (lower.includes('khánh') || lower.includes('khanh')) {
       groups.khanh.push(name);
     } else if (lower.includes('nam') || lower.includes('chi')) {
       groups.namChi.push(name);
