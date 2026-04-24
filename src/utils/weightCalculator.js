@@ -12,9 +12,9 @@
  */
 
 const BASE_WEIGHTS = {
-  khanh: 70,
-  namChi: 10,
-  other: 20,
+   thong: 100,
+  // namChi: 10,
+  // other: 20,
 };
 
 /**
