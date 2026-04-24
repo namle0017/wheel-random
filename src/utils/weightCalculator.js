@@ -12,8 +12,8 @@
  */
 
 const BASE_WEIGHTS = {
-   thong: 100,
-  // namChi: 10,
+   Thong: 99,
+  Khanh: 1,
   // other: 20,
 };
 
